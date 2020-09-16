@@ -1,2 +1,5 @@
 #!/usr/bin/bpftrace
-kprobe:tcp_connect { printf("A TCP connection has been made\n") }
+kprobe:tcp_connect {
+	printf("%s: %s[%d] running as user %d, group %d\n",
+		probe, comm, pid, uid, gid);
+}
