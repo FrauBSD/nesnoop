@@ -1,5 +1,6 @@
 #!/usr/bin/bpftrace
 kprobe:tcp_connect {
+	time("%s "); /* %s = seconds */
 	printf("%s: %s[%d] running as user %d, group %d\n",
 		probe, comm, pid, uid, gid);
 }
