@@ -3,6 +3,7 @@ kprobe:tcp_connect,
 kprobe:tcp_sendmsg,
 kprobe:tcp_recvmsg,
 kprobe:tcp_close
+/comm != "sshd"/
 {
 	time("%s "); /* %s = seconds */
 	printf("%s: %s[%d] running as user %d, group %d\n",
