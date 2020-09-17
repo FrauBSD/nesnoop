@@ -1,5 +1,9 @@
 #!/usr/bin/bpftrace
-kprobe:tcp_connect {
+kprobe:tcp_connect,
+kprobe:tcp_sendmsg,
+kprobe:tcp_recvmsg,
+kprobe:tcp_close
+{
 	time("%s "); /* %s = seconds */
 	printf("%s: %s[%d] running as user %d, group %d\n",
 		probe, comm, pid, uid, gid);
