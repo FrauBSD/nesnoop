@@ -1,11 +1,19 @@
 #!/usr/bin/bpftrace
+kprobe:tcp_connect, kprobe:tcp_close
+/comm != "sshd" && arg0 != 0/ { @sk[tid] = arg0 }
+kprobe:tcp_sendmsg, kprobe:tcp_recvmsg
+/comm != "sshd" && arg1 != 0/ { @sk[tid] = arg1 }
+
 kprobe:tcp_connect,
 kprobe:tcp_sendmsg,
 kprobe:tcp_recvmsg,
 kprobe:tcp_close
-/comm != "sshd"/
+/@sk[tid]/
 {
 	time("%s "); /* %s = seconds */
 	printf("%s: %s[%d] running as user %d, group %d\n",
 		probe, comm, pid, uid, gid);
+	delete(@sk[tid]);
 }
+
+END { clear(@sk) }
