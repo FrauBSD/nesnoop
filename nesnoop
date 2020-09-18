@@ -14,17 +14,10 @@ kprobe:tcp_close
 /@sk[tid]/
 {
 	$sk = (struct sock *)@sk[tid];
-	$sk_common = $sk->__sk_common;
-	/* NB: This should be avoided */
 
 	time("%s "); /* %s = seconds */
 	printf("%s: %s[%d] running as user %d, group %d [dest: %d]\n",
-		probe, comm, pid, uid, gid, $sk_common.skc_daddr);
-	/* NB: Accessing skc_daddr forces bpf to copy sk_common on to stack
-	 *     which results in exceeding 512 byte stack limit
-	 * NB: We will see in the next commit that the better approach is to
-	 *     use the header macros for accessing the same data
-	 */
+		probe, comm, pid, uid, gid, $sk->__sk_common.skc_daddr);
 
 	delete(@sk[tid]);
 }
