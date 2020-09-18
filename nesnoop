@@ -1,4 +1,7 @@
 #!/usr/bin/bpftrace
+
+#include <net/sock.h>
+
 kprobe:tcp_connect, kprobe:tcp_close
 /comm != "sshd" && arg0 != 0/ { @sk[tid] = arg0 }
 kprobe:tcp_sendmsg, kprobe:tcp_recvmsg
@@ -10,6 +13,8 @@ kprobe:tcp_recvmsg,
 kprobe:tcp_close
 /@sk[tid]/
 {
+	$sk = (struct sock *)@sk[tid];
+
 	time("%s "); /* %s = seconds */
 	printf("%s: %s[%d] running as user %d, group %d\n",
 		probe, comm, pid, uid, gid);
