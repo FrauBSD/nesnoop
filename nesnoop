@@ -17,7 +17,7 @@ kprobe:tcp_close
 
 	time("%s "); /* %s = seconds */
 	printf("%s: %s[%d] running as user %d, group %d [dest: %d]\n",
-		probe, comm, pid, uid, gid, $sk->__sk_common.skc_daddr);
+		probe, comm, pid, uid, gid, $sk->sk_daddr);
 
 	delete(@sk[tid]);
 }
