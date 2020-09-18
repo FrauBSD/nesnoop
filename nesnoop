@@ -16,8 +16,8 @@ kprobe:tcp_close
 	$sk = (struct sock *)@sk[tid];
 
 	time("%s "); /* %s = seconds */
-	printf("%s: %s[%d] running as user %d, group %d [dest: %d]\n",
-		probe, comm, pid, uid, gid, $sk->sk_daddr);
+	printf("%s: %s[%d] running as user %d, group %d [dest: %s]\n",
+		probe, comm, pid, uid, gid, ntop($sk->sk_daddr));
 
 	delete(@sk[tid]);
 }
