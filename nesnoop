@@ -14,6 +14,7 @@ kprobe:tcp_close
 /@sk[tid]/
 {
 	$sk = (struct sock *)@sk[tid];
+	$sk_common = $sk->__sk_common;
 
 	time("%s "); /* %s = seconds */
 	printf("%s: %s[%d] running as user %d, group %d\n",
