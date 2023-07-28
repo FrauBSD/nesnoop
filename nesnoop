@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.2 $'
+VERSION='$Version: 0.2.1 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -199,8 +199,8 @@ shift $(( $OPTIND - 1 ))
 	{
 		\$sk = (struct sock *)@sk[tid];
 
-		time("%s "); /* %s = seconds */
-		printf("%s: %s[%d] running as user %d, group %d ",
+		${TIME_FMT:+time($RAW_TIME_FMT);
+		}printf(" %s: %s[%d] running as user %d, group %d ",
 			probe, comm, pid, uid, gid);
 		\$dport = \$sk->sk_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
