@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.2.1 $'
+VERSION='$Version: 0.2.2 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -40,6 +40,8 @@ export KPROBE_TCP_CLOSE=kprobe:tcp_close
 export KPROBE_TCP_CONNECT=kprobe:tcp_connect
 export KPROBE_TCP_RECVMSG=kprobe:tcp_recvmsg
 export KPROBE_TCP_SENDMSG=kprobe:tcp_sendmsg
+export KRETPROBE_TCP_RECVMSG=kretprobe:tcp_recvmsg
+export KRETPROBE_TCP_SENDMSG=kretprobe:tcp_sendmsg
 
 #
 # Miscellaneous
@@ -189,22 +191,34 @@ shift $(( $OPTIND - 1 ))
 	$KPROBE_TCP_SENDMSG, $KPROBE_TCP_RECVMSG
 	/comm != "sshd" && arg1 != 0/ { @sk[tid] = arg1 }
 
-	////////////////////////////////////////////////// PROBE
+	////////////////////////////////////////////////// ENDPOINT PROBES
 
-	$KPROBE_TCP_CONNECT,
-	$KPROBE_TCP_SENDMSG,
-	$KPROBE_TCP_RECVMSG,
-	$KPROBE_TCP_CLOSE
+	$KPROBE_TCP_CONNECT, $KPROBE_TCP_CLOSE
 	/@sk[tid]/
 	{
 		\$sk = (struct sock *)@sk[tid];
-
-		${TIME_FMT:+time($RAW_TIME_FMT);
-		}printf(" %s: %s[%d] running as user %d, group %d ",
-			probe, comm, pid, uid, gid);
 		\$dport = \$sk->sk_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
-		printf("[dest: %s:%d]\n", ntop(\$sk->sk_daddr), \$dport);
+
+		${TIME_FMT:+time($RAW_TIME_FMT);
+		}printf("|%s|%d.%d|%s|%d|", probe, uid, gid, comm, pid);
+		printf("%s|%d\n", ntop(\$sk->sk_daddr), \$dport);
+
+		delete(@sk[tid]);
+	}
+
+	////////////////////////////////////////////////// SEND/RECV PROBES
+
+	$KRETPROBE_TCP_SENDMSG, $KRETPROBE_TCP_RECVMSG
+	/@sk[tid]/
+	{
+		\$sk = (struct sock *)@sk[tid];
+		\$dport = \$sk->sk_dport;
+		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
+
+		${TIME_FMT:+time($RAW_TIME_FMT);
+		}printf("|%s|%d.%d|%s|%d|", probe, uid, gid, comm, pid);
+		printf("%s|%d|%ld\n", ntop(\$sk->sk_daddr), \$dport, retval);
 
 		delete(@sk[tid]);
 	}
