@@ -4,7 +4,7 @@
 #
 # $Title: Script to snoop on Network End-point events under Linux $
 # $Copyright: 2020-2023 Devin Teske. All rights reserved. $
-# $FrauBSD: nesnoop/nesnoop 2023-07-28 16:39:50 -0700 freebsdfrau $
+# $FrauBSD: nesnoop/nesnoop 2023-07-28 16:42:37 -0700 freebsdfrau $
 #
 ############################################################ DEFAULTS
 
@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.2.3 $'
+VERSION='$Version: 0.2.4 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -291,3 +291,14 @@ EOF
 
 	END { exit exit_status }
 ' # END-QUOTE
+
+################################################################################
+# END
+################################################################################
+# Local Variables:
+# mode: sh
+# tab-width: 8
+# sh-basic-offset: 8
+# indent-tabs-mode: t
+# backward-delete-char-untabify-method: nil
+# End:
