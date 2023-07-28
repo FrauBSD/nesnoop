@@ -1,28 +1,279 @@
-#!/usr/bin/bpftrace
+#!/bin/sh
+# vi: set ft=sh noet ts=8 sw=8 :: Vi/ViM
+############################################################ IDENT(1)
+#
+# $Title: Script to snoop on Network End-point events under Linux $
+# $Copyright: 2020-2023 Devin Teske. All rights reserved. $
+# $FrauBSD$
+#
+############################################################ DEFAULTS
 
-#include <net/sock.h>
+DEFAULT_TIME_FMT="%Y %b %e %T"
 
-kprobe:tcp_connect, kprobe:tcp_close
-/comm != "sshd" && arg0 != 0/ { @sk[tid] = arg0 }
-kprobe:tcp_sendmsg, kprobe:tcp_recvmsg
-/comm != "sshd" && arg1 != 0/ { @sk[tid] = arg1 }
+############################################################ GLOBALS
 
-kprobe:tcp_connect,
-kprobe:tcp_sendmsg,
-kprobe:tcp_recvmsg,
-kprobe:tcp_close
-/@sk[tid]/
+VERSION='$Version: 0.2 $'
+
+pgm="${0##*/}" # Program basename
+
+#
+# Global exit status
+#
+SUCCESS=0
+FAILURE=1
+
+#
+# Command-line options
+#
+COLOR=				# -c
+DEBUG=				# -d
+RAW_OUTPUT=			# -r
+SILENT=				# -s
+TIME_FMT="$DEFAULT_TIME_FMT"	# -t fmt
+
+#
+# Probes
+# NB: Dependent on kernel version
+# NB: export'd for awk(1) `ENVIRON' access
+#
+export KPROBE_TCP_CLOSE=kprobe:tcp_close
+export KPROBE_TCP_CONNECT=kprobe:tcp_connect
+export KPROBE_TCP_RECVMSG=kprobe:tcp_recvmsg
+export KPROBE_TCP_SENDMSG=kprobe:tcp_sendmsg
+
+#
+# Miscellaneous
+#
+CONS=1
+RAW_TIME_FMT='"%s"'
+
+############################################################ FUNCTIONS
+
+die()
 {
-	$sk = (struct sock *)@sk[tid];
-
-	time("%s "); /* %s = seconds */
-	printf("%s: %s[%d] running as user %d, group %d ",
-		probe, comm, pid, uid, gid);
-	$dport = $sk->sk_dport;
-	$dport = ($dport >> 8) | (($dport << 8) & 0xFF00);
-	printf("[dest: %s:%d]\n", ntop($sk->sk_daddr), $dport);
-
-	delete(@sk[tid]);
+	local fmt="$1"
+	if [ "$fmt" ]; then
+		shift 1 # fmt
+		printf "%s: $fmt\n" "$pgm" "$@" >&2
+	fi
+	exit $FAILURE
 }
 
-END { clear(@sk) }
+info()
+{
+	[ ! "$SILENT" ] || return
+	printf "${CONS:+\033[35m}INFO${CONS:+\033[39m} %s\n" "$*" >&2
+}
+
+warn()
+{
+	[ ! "$SILENT" ] || return
+	printf "${CONS:+\033[31;1m}WARNING${CONS:+\033[39;22m} %s\n" "$*" >&2
+}
+
+usage()
+{
+	local optfmt="\t%-9s %s\n"
+	exec >&2
+	printf "Usage: %s [OPTIONS]\n" "$pgm"
+	printf "Options:\n"
+	printf "$optfmt" "-c" "Always enable color."
+	printf "$optfmt" "-d" "Debug. Print script and exit."
+	printf "$optfmt" "-h" "Print this usage statement and exit."
+	printf "$optfmt" "-r" "Show unformatted raw output."
+	printf "$optfmt" "-s" "Silent. Hide informational messages/warnings."
+	printf "$optfmt" "-t fmt" "Time format. Default \`$DEFAULT_TIME_FMT'."
+	printf "$optfmt" "-v" "Print version information and exit."
+	die
+}
+
+run_bpftrace()
+{
+	if [ "$DEBUG" ]; then
+		cat
+		return
+	fi
+
+	exec bpftrace -B none /dev/stdin
+}
+
+bpf_prog_id()
+{
+	local __pid="$1" __prog="$2" __var_to_set="$3"
+	local __ls __out __res
+
+	[ "$__pid" -a "$__prog" ] || return ${FAILURE:-1}
+
+	__ls=$( ls -l /proc/$__pid/fd 2> /dev/null ) || return
+	__out=$( echo "$__ls" | awk -v pid=$__pid -v prog="$__prog" '
+		$NF == "anon_inode:bpf-prog" {
+			fd = $(NF-2)
+			fdinfo = sprintf("/proc/%d/fdinfo/%d", pid, fd)
+			id = ""
+			while (getline < fdinfo > 0) {
+				if ($1 != "prog_id:") continue
+				id = $2
+				break
+			}
+			close(fdinfo)
+			if (id == "") next
+			cmd = sprintf("bpftool prog show id %d", id)
+			if (cmd | getline <= 0 || $4 != prog) {
+				close(cmd)
+				next
+			}
+			print id
+			exit found = 1
+		}
+		END { exit found ? 0 : 3 }
+	' )
+	__res=$?
+
+	if [ "$__var_to_set" ]; then
+		eval $__var_to_set=\"\$__out\"
+	else
+		echo "$__out"
+	fi
+
+	return $__res
+}
+
+############################################################ MAIN
+
+#
+# Process command-line options
+#
+while getopts cdhrst:v flag; do
+	case "$flag" in
+	c) COLOR=1 ;;
+	d) DEBUG=1 ;;
+	r) RAW_OUTPUT=1 ;;
+	s) SILENT=1 ;;
+	t) TIME_FMT="$OPTARG" ;;
+	v) VERSION="${VERSION#*: }"
+		echo "${VERSION% $}"
+		exit $SUCCESS ;;
+	*) usage # NOTREACHED
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Process `-c' command-line option
+#
+[ "$COLOR" -o -t 1 ] || CONS= # stdout is not a tty
+
+#
+# Run script
+#
+{
+	exec 3<&1
+
+	#
+	# Start background bpftrace
+	# NB: M-x package-install [RET] dtrace-script-mode [RET]
+	#
+	run_bpftrace <<EOF &
+	${DEBUG:+#!/usr/bin/bpftrace}
+	/* -*- mode: dtrace-script; tab-width: 4 -*- ;; Emacs
+	 * vi: set ft=dtrace noet ts=4 sw=4 :: Vi/ViM
+	 */
+	////////////////////////////////////////////////// INCLUDES
+
+	#include <net/sock.h>
+
+	////////////////////////////////////////////////// FILTER
+
+	$KPROBE_TCP_CONNECT, $KPROBE_TCP_CLOSE
+	/comm != "sshd" && arg0 != 0/ { @sk[tid] = arg0 }
+	$KPROBE_TCP_SENDMSG, $KPROBE_TCP_RECVMSG
+	/comm != "sshd" && arg1 != 0/ { @sk[tid] = arg1 }
+
+	////////////////////////////////////////////////// PROBE
+
+	$KPROBE_TCP_CONNECT,
+	$KPROBE_TCP_SENDMSG,
+	$KPROBE_TCP_RECVMSG,
+	$KPROBE_TCP_CLOSE
+	/@sk[tid]/
+	{
+		\$sk = (struct sock *)@sk[tid];
+
+		time("%s "); /* %s = seconds */
+		printf("%s: %s[%d] running as user %d, group %d ",
+			probe, comm, pid, uid, gid);
+		\$dport = \$sk->sk_dport;
+		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
+		printf("[dest: %s:%d]\n", ntop(\$sk->sk_daddr), \$dport);
+
+		delete(@sk[tid]);
+	}
+
+	////////////////////////////////////////////////// END
+
+	END { clear(@sk) }
+
+	//////////////////////////////////////////////////////////////////////
+	// END
+	//////////////////////////////////////////////////////////////////////
+EOF
+	pid=$!
+	prog_id=
+
+	#
+	# Identify child bpftrace
+	#
+	if [ ! "$DEBUG" ]; then
+		info "Waiting for bpftrace to initialize..."
+		while kill -0 $pid 2> /dev/null; do
+			bpf_prog_id $pid BEGIN prog_id
+			[ "$prog_id" ] || continue
+			break
+			sleep 1
+		done
+		if ! kill -0 $pid 2> /dev/null; then
+			wait $pid > /dev/null 2>&1 # Collect exit status
+			echo EXIT:$? # Send status to post-processor
+			exit
+		fi
+	fi
+
+	# BOOTSTRAP
+
+	#
+	# Bring bpftrace child back to foreground
+	#
+	wait $pid > /dev/null 2>&1 # Collect exit status
+	echo EXIT:$? # Send status to post-processor
+} | awk -F'|' \
+	-v cons=${CONS:-0} \
+	-v debug=${DEBUG:-0} \
+	-v silent=${SILENT:-0} \
+	-v stderr=/dev/stderr \
+	-v timefmt="$TIME_FMT" \
+	'################################################# BEGIN
+
+	BEGIN {
+		exit_status = 0 # SUCCESS
+
+		srand() # Seed clock
+	}
+
+	################################################## FUNCTIONS
+
+	function fprint() { print; fflush() }
+	function eprint() { print > stderr; fflush(stderr) }
+
+	################################################## MAIN
+
+	sub(/^EXIT:/, "") { exit_status = $0; next }
+	debug { sub(/^\t/, ""); fprint(); next }
+	raw { fprint(); next }
+	/^Attaching [0-9]+ probes/ { eprint(); next }
+
+	1
+
+	################################################## END
+
+	END { exit exit_status }
+' # END-QUOTE
