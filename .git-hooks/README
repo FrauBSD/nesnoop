@@ -1,0 +1,23 @@
+# $FrauBSD: nesnoop/.git-hooks/README 2023-07-28 16:39:34 -0700 freebsdfrau $
+
+!! ATTENTION DEVELOPERS AND CONTRIBUTORS !!
+
+To get RCS Keywords (like the FrauBSD one at the top of this file) to expand,
+follow these steps before using `git commit' in this project:
+
+   $ .git-hooks/install.sh
+
+Cheers!
+
+Supported keywords:
+
+	$Author: freebsdfrau $
+	$Branch: master $
+	$Date: 2023-07-28 16:39:34 -0700 $
+	$Header: .git-hooks/README 2023-07-28 16:39:34 -0700 freebsdfrau $
+	$Origin: git@github.com:FrauBSD/nesnoop.git $
+	$Project: FrauBSD/nesnoop.git $
+	$RCSfile: README $
+	$Source: .git-hooks/README $
+	$FrauBSD: nesnoop/.git-hooks/README 2023-07-28 16:39:34 -0700 freebsdfrau $
+
