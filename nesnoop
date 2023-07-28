@@ -4,7 +4,7 @@
 #
 # $Title: Script to snoop on Network End-point events under Linux $
 # $Copyright: 2020-2023 Devin Teske. All rights reserved. $
-# $FrauBSD$
+# $FrauBSD: nesnoop/nesnoop 2023-07-28 16:39:50 -0700 freebsdfrau $
 #
 ############################################################ DEFAULTS
 
@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.2.2 $'
+VERSION='$Version: 0.2.3 $'
 
 pgm="${0##*/}" # Program basename
 
