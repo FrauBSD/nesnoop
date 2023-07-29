@@ -4,7 +4,7 @@
 #
 # $Title: Script to snoop on Network End-point events under Linux $
 # $Copyright: 2020-2023 Devin Teske. All rights reserved. $
-# $FrauBSD: nesnoop/nesnoop 2023-07-28 17:19:32 -0700 freebsdfrau $
+# $FrauBSD: nesnoop/nesnoop 2023-07-28 18:16:59 -0700 freebsdfrau $
 #
 ############################################################ DEFAULTS
 
@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.3 $'
+VERSION='$Version: 0.4 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -184,14 +184,10 @@ shift $(( $OPTIND - 1 ))
 
 	#include <net/sock.h>
 
-	////////////////////////////////////////////////// FILTER
+	////////////////////////////////////////////////// ENDPOINT PROBES
 
 	$KPROBE_TCP_CONNECT, $KPROBE_TCP_CLOSE
 	/comm != "sshd" && arg0 != 0/ { @sk[tid] = arg0 }
-	$KPROBE_TCP_SENDMSG, $KPROBE_TCP_RECVMSG
-	/comm != "sshd" && arg1 != 0/ { @sk[tid] = arg1 }
-
-	////////////////////////////////////////////////// ENDPOINT PROBES
 
 	$KPROBE_TCP_CONNECT, $KPROBE_TCP_CLOSE
 	/@sk[tid]/
@@ -209,23 +205,36 @@ shift $(( $OPTIND - 1 ))
 
 	////////////////////////////////////////////////// SEND/RECV PROBES
 
+	$KPROBE_TCP_SENDMSG, $KPROBE_TCP_RECVMSG
+	/comm != "sshd" && arg1 != 0/ {
+		// Pass args to kretprobe
+		@sk[tid] = arg1;
+		@size[tid] = arg3;
+	}
+
 	$KRETPROBE_TCP_SENDMSG, $KRETPROBE_TCP_RECVMSG
 	/@sk[tid]/
 	{
 		\$sk = (struct sock *)@sk[tid];
 		\$dport = \$sk->sk_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
+		\$size = @size[tid];
 
 		${TIME_FMT:+time($RAW_TIME_FMT);
 		}printf("|%s|%d.%d|%s|%d|", probe, uid, gid, comm, pid);
-		printf("%s|%d|%ld\n", ntop(\$sk->sk_daddr), \$dport, retval);
+		printf("%s|%d|%d|%d\n", ntop(\$sk->sk_daddr), \$dport,
+			\$size, retval);
 
+		delete(@size[tid]);
 		delete(@sk[tid]);
 	}
 
 	////////////////////////////////////////////////// END
 
-	END { clear(@sk) }
+	END {
+		clear(@size);
+		clear(@sk);
+	}
 
 	//////////////////////////////////////////////////////////////////////
 	// END
@@ -278,12 +287,24 @@ EOF
 		red     = "\033[31m"
 		green   = "\033[32m"
 		yellow  = "\033[33m"
+		blue    = "\033[34m"
 		magenta = "\033[35m"
 		cyan    = "\033[36m"
 		fgreset = "\033[39m"
 
 		srand() # Seed clock
 		tlim = srand() * 2 # limit time outliers
+
+		delete errno
+		cmd = "cpp -dM /usr/include/errno.h"
+		while (cmd | getline > 0) {
+			if (split($0, words, / +/) < 3) continue
+			if (words[1] != "#define") continue
+			macro = words[2]
+			if (substr(macro, 1, 1) != "E") continue
+			errno[words[3]] = macro
+		}
+		close(cmd)
 	}
 
 	################################################## FUNCTIONS
@@ -361,16 +382,22 @@ EOF
 
 	call == ENVIRON["KPROBE_TCP_CONNECT"] ||
 	call == ENVIRON["KPROBE_TCP_CLOSE"] {
-		emit(green)
+		if (dest_addr == "0.0.0.0" && dest_port == 0) next
+			# NB: Hide local socket activity events
+		callfunc = substr(call, 12)
+		emit(callfunc == "connect" ? green : blue,
+			sprintf("%s()", callfunc))
 	}
 
 	call == ENVIRON["KRETPROBE_TCP_SENDMSG"] ||
 	call == ENVIRON["KRETPROBE_TCP_RECVMSG"] {
-		if (NF < NCF + 1) next # Malformed input
-		ret = $(NCF + 1)
-		callfunc = substr(call, 15, 4)
-		emit(callfunc == "recv" ? cyan : red,
-			sprintf("%s() = %ld", callfunc, ret))
+		if (NF < NCF + 2) next # Malformed input
+		size = $(NCF + 1)
+		ret = $(NCF + 2)
+		callfunc = substr(call, 15)
+		emit(substr(callfunc, 1, 4) == "recv" ? cyan : red,
+			sprintf("%s(%d) = %d %s", callfunc, size, ret,
+			ret < 0 ? "<" errno[-1 * ret] ">" : ""))
 	}
 
 	################################################## END
