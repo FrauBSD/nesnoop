@@ -4,7 +4,7 @@
 #
 # $Title: Script to snoop on Network End-point events under Linux $
 # $Copyright: 2020-2023 Devin Teske. All rights reserved. $
-# $FrauBSD: nesnoop/nesnoop 2023-07-28 16:42:37 -0700 freebsdfrau $
+# $FrauBSD: nesnoop/nesnoop 2023-07-28 17:19:32 -0700 freebsdfrau $
 #
 ############################################################ DEFAULTS
 
@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.2.4 $'
+VERSION='$Version: 0.3 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -262,21 +262,67 @@ EOF
 } | awk -F'|' \
 	-v cons=${CONS:-0} \
 	-v debug=${DEBUG:-0} \
+	-v raw=${RAW_OUTPUT:-0} \
 	-v silent=${SILENT:-0} \
 	-v stderr=/dev/stderr \
 	-v timefmt="$TIME_FMT" \
 	'################################################# BEGIN
 
 	BEGIN {
+		NCF = 7 # Number of common fields
+
 		exit_status = 0 # SUCCESS
 
+		bold    = "\033[1m"
+		nobold  = "\033[22m"
+		red     = "\033[31m"
+		green   = "\033[32m"
+		yellow  = "\033[33m"
+		magenta = "\033[35m"
+		cyan    = "\033[36m"
+		fgreset = "\033[39m"
+
 		srand() # Seed clock
+		tlim = srand() * 2 # limit time outliers
 	}
 
 	################################################## FUNCTIONS
 
 	function fprint() { print; fflush() }
 	function eprint() { print > stderr; fflush(stderr) }
+
+	function info(str)
+	{
+		if (silent) return
+		printf "%sINFO%s %s\n",
+			cons ? magenta : "", cons ? fgreset : "", str > stderr
+		fflush(stderr)
+	}
+
+	function warn(str)
+	{
+		if (silent) return
+		printf "%sWARNING%s %s\n", cons ? yellow bold : "",
+			cons ? fgreset nobold : "", str > stderr
+		fflush(stderr)
+	}
+
+	function emit(color, str)
+	{
+		if (timefmt != "") {
+			if (time !~ /^[0-9]+$/ || time > tlim || time < 0)
+				return
+			printf "%s%s%s %s %s[%d]: [%s]:%d %s\n",
+				cons ? color : "", strftime(timefmt, time),
+				cons ? fgreset : "", user, cmd, pid,
+				dest_addr, dest_port, str;
+		} else {
+			printf "%s %s[%d]: [%s]:%d %s\n",
+				user, cmd, pid,
+				dest_addr, dest_port, str;
+		}
+		fflush()
+	}
 
 	################################################## MAIN
 
@@ -285,7 +331,47 @@ EOF
 	raw { fprint(); next }
 	/^Attaching [0-9]+ probes/ { eprint(); next }
 
-	1
+	# Base fields
+	{ time = $1 }
+	timefmt != "" {
+		if (time == "" || time < 0) next
+	}
+	{ call = $2 }
+
+	# Message passing
+	call == "info" || call == "warn" {
+		msg = $0
+		for (n = 1; n <= 2; n++)
+			sub(/^[^|]*\|/, "", msg)
+		if (call == "info") info(msg)
+		else if (call == "warn") warn(msg)
+		next
+	}
+
+	# Common fields
+	NF < NCF { next } # Malformed input
+	{
+		user = $3 # uid.gid
+		cmd = $4
+		sub(/ +       [[:digit:]]+$/, "", cmd)
+		pid = $5
+		dest_addr = $6
+		dest_port = $7
+	}
+
+	call == ENVIRON["KPROBE_TCP_CONNECT"] ||
+	call == ENVIRON["KPROBE_TCP_CLOSE"] {
+		emit(green)
+	}
+
+	call == ENVIRON["KRETPROBE_TCP_SENDMSG"] ||
+	call == ENVIRON["KRETPROBE_TCP_RECVMSG"] {
+		if (NF < NCF + 1) next # Malformed input
+		ret = $(NCF + 1)
+		callfunc = substr(call, 15, 4)
+		emit(callfunc == "recv" ? cyan : red,
+			sprintf("%s() = %ld", callfunc, ret))
+	}
 
 	################################################## END
 
