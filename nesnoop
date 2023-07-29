@@ -4,7 +4,7 @@
 #
 # $Title: Script to snoop on Network End-point events under Linux $
 # $Copyright: 2020-2023 Devin Teske. All rights reserved. $
-# $FrauBSD: nesnoop/nesnoop 2023-07-28 18:16:59 -0700 freebsdfrau $
+# $FrauBSD: nesnoop/nesnoop 2023-07-28 19:00:47 -0700 freebsdfrau $
 #
 ############################################################ DEFAULTS
 
@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.4 $'
+VERSION='$Version: 0.5 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -186,54 +186,109 @@ shift $(( $OPTIND - 1 ))
 
 	////////////////////////////////////////////////// ENDPOINT PROBES
 
-	$KPROBE_TCP_CONNECT, $KPROBE_TCP_CLOSE
-	/comm != "sshd" && arg0 != 0/ { @sk[tid] = arg0 }
+	/*
+	 * connect(2)/close(2) probes
+	 */
 
-	$KPROBE_TCP_CONNECT, $KPROBE_TCP_CLOSE
-	/@sk[tid]/
+	$KPROBE_TCP_CONNECT
+	/comm != "sshd" && arg0 != 0/
+	{ @connect_sk[tid] = arg0 }
+
+	$KPROBE_TCP_CONNECT
+	/@connect_sk[tid]/
 	{
-		\$sk = (struct sock *)@sk[tid];
+		\$sk = (struct sock *)@connect_sk[tid];
 		\$dport = \$sk->sk_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
 
 		${TIME_FMT:+time($RAW_TIME_FMT);
-		}printf("|%s|%d.%d|%s|%d|", probe, uid, gid, comm, pid);
+		}printf("|connect|%d.%d|%s|%d|", uid, gid, comm, pid);
 		printf("%s|%d\n", ntop(\$sk->sk_daddr), \$dport);
 
-		delete(@sk[tid]);
+		delete(@connect_sk[tid]);
+	}
+
+	$KPROBE_TCP_CLOSE
+	/comm != "sshd" && arg0 != 0/
+	{ @close_sk[tid] = arg0 }
+
+	$KPROBE_TCP_CLOSE
+	/@close_sk[tid]/
+	{
+		\$sk = (struct sock *)@close_sk[tid];
+		\$dport = \$sk->sk_dport;
+		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
+
+		${TIME_FMT:+time($RAW_TIME_FMT);
+		}printf("|close|%d.%d|%s|%d|", uid, gid, comm, pid);
+		printf("%s|%d\n", ntop(\$sk->sk_daddr), \$dport);
+
+		delete(@close_sk[tid]);
 	}
 
 	////////////////////////////////////////////////// SEND/RECV PROBES
 
-	$KPROBE_TCP_SENDMSG, $KPROBE_TCP_RECVMSG
-	/comm != "sshd" && arg1 != 0/ {
-		// Pass args to kretprobe
-		@sk[tid] = arg1;
-		@size[tid] = arg3;
+	/*
+	 * send(2)/recv(2) [exit] probes
+	 */
+
+	$KPROBE_TCP_SENDMSG
+	/comm != "sshd" && arg1 != 0/
+	{
+		@send_sk[tid] = arg1;
+		@send_size[tid] = arg3;
 	}
 
-	$KRETPROBE_TCP_SENDMSG, $KRETPROBE_TCP_RECVMSG
-	/@sk[tid]/
+	$KRETPROBE_TCP_SENDMSG
+	/@send_sk[tid]/
 	{
-		\$sk = (struct sock *)@sk[tid];
+		\$sk = (struct sock *)@send_sk[tid];
 		\$dport = \$sk->sk_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
-		\$size = @size[tid];
+		\$size = @send_size[tid];
 
 		${TIME_FMT:+time($RAW_TIME_FMT);
-		}printf("|%s|%d.%d|%s|%d|", probe, uid, gid, comm, pid);
+		}printf("|sendmsg|%d.%d|%s|%d|", uid, gid, comm, pid);
 		printf("%s|%d|%d|%d\n", ntop(\$sk->sk_daddr), \$dport,
 			\$size, retval);
 
-		delete(@size[tid]);
-		delete(@sk[tid]);
+		delete(@send_size[tid]);
+		delete(@send_sk[tid]);
+	}
+
+	$KPROBE_TCP_RECVMSG
+	/comm != "sshd" && arg1 != 0/
+	{
+		@recv_sk[tid] = arg1;
+		@recv_len[tid] = arg3;
+	}
+
+	$KRETPROBE_TCP_RECVMSG
+	/@recv_sk[tid]/
+	{
+		\$sk = (struct sock *)@recv_sk[tid];
+		\$dport = \$sk->sk_dport;
+		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
+		\$len = @recv_len[tid];
+
+		${TIME_FMT:+time($RAW_TIME_FMT);
+		}printf("|recvmsg|%d.%d|%s|%d|", uid, gid, comm, pid);
+		printf("%s|%d|%d|%d\n", ntop(\$sk->sk_daddr), \$dport,
+			\$len, retval);
+
+		delete(@recv_len[tid]);
+		delete(@recv_sk[tid]);
 	}
 
 	////////////////////////////////////////////////// END
 
 	END {
-		clear(@size);
-		clear(@sk);
+		clear(@close_sk);
+		clear(@connect_sk);
+		clear(@recv_len);
+		clear(@recv_sk);
+		clear(@send_size);
+		clear(@send_sk);
 	}
 
 	//////////////////////////////////////////////////////////////////////
@@ -380,24 +435,32 @@ EOF
 		dest_port = $7
 	}
 
-	call == ENVIRON["KPROBE_TCP_CONNECT"] ||
-	call == ENVIRON["KPROBE_TCP_CLOSE"] {
+	call == "connect" {
 		if (dest_addr == "0.0.0.0" && dest_port == 0) next
 			# NB: Hide local socket activity events
-		callfunc = substr(call, 12)
-		emit(callfunc == "connect" ? green : blue,
-			sprintf("%s()", callfunc))
+		emit(green, "connect()")
 	}
 
-	call == ENVIRON["KRETPROBE_TCP_SENDMSG"] ||
-	call == ENVIRON["KRETPROBE_TCP_RECVMSG"] {
+	call == "close" {
+		if (dest_addr == "0.0.0.0" && dest_port == 0) next
+			# NB: Hide local socket activity events
+		emit(blue, "close()")
+	}
+
+	call == "sendmsg" {
 		if (NF < NCF + 2) next # Malformed input
 		size = $(NCF + 1)
 		ret = $(NCF + 2)
-		callfunc = substr(call, 15)
-		emit(substr(callfunc, 1, 4) == "recv" ? cyan : red,
-			sprintf("%s(%d) = %d %s", callfunc, size, ret,
-			ret < 0 ? "<" errno[-1 * ret] ">" : ""))
+		emit(red, sprintf("sendmsg(size=%d) = %i %s",
+			size, ret, ret < 0 ? "<" errno[-1 * ret] ">" : ""))
+	}
+
+	call == "recvmsg" {
+		if (NF < NCF + 2) next # Malformed input
+		len = $(NCF + 1)
+		ret = $(NCF + 2)
+		emit(cyan, sprintf("recvmsg(len=%d) = %i %s",
+			len, ret, ret < 0 ? "<" errno[-1 * ret] ">" : ""))
 	}
 
 	################################################## END
