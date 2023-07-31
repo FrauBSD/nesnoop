@@ -4,7 +4,7 @@
 #
 # $Title: Script to snoop on Network End-point events under Linux $
 # $Copyright: 2020-2023 Devin Teske. All rights reserved. $
-# $FrauBSD: nesnoop/nesnoop 2023-07-31 15:18:29 -0700 freebsdfrau $
+# $FrauBSD: nesnoop/nesnoop 2023-07-31 16:07:36 -0700 freebsdfrau $
 #
 ############################################################ DEFAULTS
 
@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.6 $'
+VERSION='$Version: 0.6.1 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -447,18 +447,18 @@ EOF
 		pid = $5
 		dest_addr = $6
 		dest_port = $7
+		if (dest_addr == "0.0.0.0" && dest_port == 0) next
+			# NB: Hide local socket activity events
 	}
 
 	call == "connect" {
-		if (dest_addr == "0.0.0.0" && dest_port == 0) next
-			# NB: Hide local socket activity events
 		emit(green, sprintf("connect([%s]:%u)", dest_addr, dest_port))
+		next
 	}
 
 	call == "close" {
-		if (dest_addr == "0.0.0.0" && dest_port == 0) next
-			# NB: Hide local socket activity events
 		emit(blue, sprintf("close([%s]:%u)", dest_addr, dest_port))
+		next
 	}
 
 	call == "sendmsg" {
@@ -468,6 +468,7 @@ EOF
 		emit(red, sprintf("sendmsg([%s]:%u, size=%d) = %i %s",
 			dest_addr, dest_port, size, ret,
 			ret < 0 ? "<" errno[-1 * ret] ">" : ""))
+		next
 	}
 
 	call == "recvmsg" {
@@ -477,6 +478,7 @@ EOF
 		emit(cyan, sprintf("recvmsg([%s]:%u, len=%d) = %i %s",
 			dest_addr, dest_port, len, ret,
 			ret < 0 ? "<" errno[-1 * ret] ">" : ""))
+		next
 	}
 
 	################################################## END
