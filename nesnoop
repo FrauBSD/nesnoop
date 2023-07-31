@@ -4,7 +4,7 @@
 #
 # $Title: Script to snoop on Network End-point events under Linux $
 # $Copyright: 2020-2023 Devin Teske. All rights reserved. $
-# $FrauBSD: nesnoop/nesnoop 2023-07-28 19:00:47 -0700 freebsdfrau $
+# $FrauBSD: nesnoop/nesnoop 2023-07-31 15:18:29 -0700 freebsdfrau $
 #
 ############################################################ DEFAULTS
 
@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.5 $'
+VERSION='$Version: 0.6 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -46,6 +46,8 @@ export KRETPROBE_TCP_SENDMSG=kretprobe:tcp_sendmsg
 #
 # Miscellaneous
 #
+COMM=
+CONDITION=
 CONS=1
 RAW_TIME_FMT='"%s"'
 
@@ -75,9 +77,14 @@ warn()
 
 usage()
 {
+	local fmt="$1"
 	local optfmt="\t%-9s %s\n"
 	exec >&2
-	printf "Usage: %s [OPTIONS]\n" "$pgm"
+	if [ "$fmt" ]; then
+		shift 1 # fmt
+		printf "%s: $fmt\n" "$pgm" "$@"
+	fi
+	printf "Usage: %s [OPTIONS] [comm]\n" "$pgm"
 	printf "Options:\n"
 	printf "$optfmt" "-c" "Always enable color."
 	printf "$optfmt" "-d" "Debug. Print script and exit."
@@ -161,6 +168,16 @@ done
 shift $(( $OPTIND - 1 ))
 
 #
+# Process command-line arguments
+#
+COMM="$1"
+
+#
+# Check command-line arguments
+#
+[ $# -le 1 ] || usage "Too many arguments" # NOTREACHED
+
+#
 # Process `-c' command-line option
 #
 [ "$COLOR" -o -t 1 ] || CONS= # stdout is not a tty
@@ -170,6 +187,15 @@ shift $(( $OPTIND - 1 ))
 #
 {
 	exec 3<&1
+
+	#
+	# Generate conditions
+	#
+	if [ "$COMM" ]; then
+		COMM="\"$COMM\""
+		CONDITION="$CONDITION && comm == $COMM"
+	fi
+	CONDITION="${CONDITION# && }"
 
 	#
 	# Start background bpftrace
@@ -191,13 +217,9 @@ shift $(( $OPTIND - 1 ))
 	 */
 
 	$KPROBE_TCP_CONNECT
-	/comm != "sshd" && arg0 != 0/
-	{ @connect_sk[tid] = arg0 }
-
-	$KPROBE_TCP_CONNECT
-	/@connect_sk[tid]/
+	/comm != "sshd" && arg0 != 0${CONDITION:+ && $CONDITION}/
 	{
-		\$sk = (struct sock *)@connect_sk[tid];
+		\$sk = (struct sock *)arg0;
 		\$dport = \$sk->sk_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
 
@@ -205,17 +227,13 @@ shift $(( $OPTIND - 1 ))
 		}printf("|connect|%d.%d|%s|%d|", uid, gid, comm, pid);
 		printf("%s|%d\n", ntop(\$sk->sk_daddr), \$dport);
 
-		delete(@connect_sk[tid]);
+		@trace[tid] = 1;
 	}
 
 	$KPROBE_TCP_CLOSE
-	/comm != "sshd" && arg0 != 0/
-	{ @close_sk[tid] = arg0 }
-
-	$KPROBE_TCP_CLOSE
-	/@close_sk[tid]/
+	/@trace[tid] && arg0 != 0/
 	{
-		\$sk = (struct sock *)@close_sk[tid];
+		\$sk = (struct sock *)arg0;
 		\$dport = \$sk->sk_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
 
@@ -223,7 +241,7 @@ shift $(( $OPTIND - 1 ))
 		}printf("|close|%d.%d|%s|%d|", uid, gid, comm, pid);
 		printf("%s|%d\n", ntop(\$sk->sk_daddr), \$dport);
 
-		delete(@close_sk[tid]);
+		delete(@trace[tid]);
 	}
 
 	////////////////////////////////////////////////// SEND/RECV PROBES
@@ -233,7 +251,7 @@ shift $(( $OPTIND - 1 ))
 	 */
 
 	$KPROBE_TCP_SENDMSG
-	/comm != "sshd" && arg1 != 0/
+	/comm != "sshd" && arg1 != 0${CONDITION:+ && $CONDITION}/
 	{
 		@send_sk[tid] = arg1;
 		@send_size[tid] = arg3;
@@ -257,7 +275,7 @@ shift $(( $OPTIND - 1 ))
 	}
 
 	$KPROBE_TCP_RECVMSG
-	/comm != "sshd" && arg1 != 0/
+	/comm != "sshd" && arg1 != 0${CONDITION:+ && $CONDITION}/
 	{
 		@recv_sk[tid] = arg1;
 		@recv_len[tid] = arg3;
@@ -283,12 +301,11 @@ shift $(( $OPTIND - 1 ))
 	////////////////////////////////////////////////// END
 
 	END {
-		clear(@close_sk);
-		clear(@connect_sk);
 		clear(@recv_len);
 		clear(@recv_sk);
 		clear(@send_size);
 		clear(@send_sk);
+		clear(@trace);
 	}
 
 	//////////////////////////////////////////////////////////////////////
@@ -388,14 +405,11 @@ EOF
 		if (timefmt != "") {
 			if (time !~ /^[0-9]+$/ || time > tlim || time < 0)
 				return
-			printf "%s%s%s %s %s[%d]: [%s]:%d %s\n",
+			printf "%s%s%s %s %s[%d]: %s\n",
 				cons ? color : "", strftime(timefmt, time),
-				cons ? fgreset : "", user, cmd, pid,
-				dest_addr, dest_port, str;
+				cons ? fgreset : "", user, cmd, pid, str
 		} else {
-			printf "%s %s[%d]: [%s]:%d %s\n",
-				user, cmd, pid,
-				dest_addr, dest_port, str;
+			printf "%s %s[%d]: %s\n", user, cmd, pid, str
 		}
 		fflush()
 	}
@@ -438,29 +452,31 @@ EOF
 	call == "connect" {
 		if (dest_addr == "0.0.0.0" && dest_port == 0) next
 			# NB: Hide local socket activity events
-		emit(green, "connect()")
+		emit(green, sprintf("connect([%s]:%u)", dest_addr, dest_port))
 	}
 
 	call == "close" {
 		if (dest_addr == "0.0.0.0" && dest_port == 0) next
 			# NB: Hide local socket activity events
-		emit(blue, "close()")
+		emit(blue, sprintf("close([%s]:%u)", dest_addr, dest_port))
 	}
 
 	call == "sendmsg" {
 		if (NF < NCF + 2) next # Malformed input
 		size = $(NCF + 1)
 		ret = $(NCF + 2)
-		emit(red, sprintf("sendmsg(size=%d) = %i %s",
-			size, ret, ret < 0 ? "<" errno[-1 * ret] ">" : ""))
+		emit(red, sprintf("sendmsg([%s]:%u, size=%d) = %i %s",
+			dest_addr, dest_port, size, ret,
+			ret < 0 ? "<" errno[-1 * ret] ">" : ""))
 	}
 
 	call == "recvmsg" {
 		if (NF < NCF + 2) next # Malformed input
 		len = $(NCF + 1)
 		ret = $(NCF + 2)
-		emit(cyan, sprintf("recvmsg(len=%d) = %i %s",
-			len, ret, ret < 0 ? "<" errno[-1 * ret] ">" : ""))
+		emit(cyan, sprintf("recvmsg([%s]:%u, len=%d) = %i %s",
+			dest_addr, dest_port, len, ret,
+			ret < 0 ? "<" errno[-1 * ret] ">" : ""))
 	}
 
 	################################################## END
