@@ -9,7 +9,7 @@ Group: Applications/FrauBSD
 
 Summary: nesnoop
 License: BSD
-Version: 0.6.1
+Version: 0.6.2
 Release: 1
 Buildarch: noarch
 
@@ -75,6 +75,8 @@ WWW: https://www.fraubsd.org/nesnoop
 
 
 %changelog
+* Mon Aug 28 2023 Devin Teske <dteske@fraubsd.org> 0.6.2-1
+- 57305a1 Fix for EL8+
 * Mon Jul 31 2023 Devin Teske <dteske@fraubsd.org> 0.6.1-1
 - 206e585 Refactor and optimize
 * Mon Jul 31 2023 Devin Teske <dteske@fraubsd.org> 0.6-1
