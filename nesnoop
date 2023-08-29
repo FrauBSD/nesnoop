@@ -4,7 +4,7 @@
 #
 # $Title: Script to snoop on Network End-point events under Linux $
 # $Copyright: 2020-2023 Devin Teske. All rights reserved. $
-# $FrauBSD: nesnoop/nesnoop 2023-07-31 16:07:36 -0700 freebsdfrau $
+# $FrauBSD: nesnoop/nesnoop 2023-08-28 18:16:37 -0700 freebsdfrau $
 #
 ############################################################ DEFAULTS
 
@@ -12,7 +12,7 @@ DEFAULT_TIME_FMT="%Y %b %e %T"
 
 ############################################################ GLOBALS
 
-VERSION='$Version: 0.6.1 $'
+VERSION='$Version: 0.6.2 $'
 
 pgm="${0##*/}" # Program basename
 
@@ -220,12 +220,12 @@ COMM="$1"
 	/comm != "sshd" && arg0 != 0${CONDITION:+ && $CONDITION}/
 	{
 		\$sk = (struct sock *)arg0;
-		\$dport = \$sk->sk_dport;
+		\$dport = \$sk->__sk_common.skc_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
 
 		${TIME_FMT:+time($RAW_TIME_FMT);
 		}printf("|connect|%d.%d|%s|%d|", uid, gid, comm, pid);
-		printf("%s|%d\n", ntop(\$sk->sk_daddr), \$dport);
+		printf("%s|%d\n", ntop(\$sk->__sk_common.skc_daddr), \$dport);
 
 		@trace[tid] = 1;
 	}
@@ -234,12 +234,12 @@ COMM="$1"
 	/@trace[tid] && arg0 != 0/
 	{
 		\$sk = (struct sock *)arg0;
-		\$dport = \$sk->sk_dport;
+		\$dport = \$sk->__sk_common.skc_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
 
 		${TIME_FMT:+time($RAW_TIME_FMT);
 		}printf("|close|%d.%d|%s|%d|", uid, gid, comm, pid);
-		printf("%s|%d\n", ntop(\$sk->sk_daddr), \$dport);
+		printf("%s|%d\n", ntop(\$sk->__sk_common.skc_daddr), \$dport);
 
 		delete(@trace[tid]);
 	}
@@ -261,13 +261,13 @@ COMM="$1"
 	/@send_sk[tid]/
 	{
 		\$sk = (struct sock *)@send_sk[tid];
-		\$dport = \$sk->sk_dport;
+		\$dport = \$sk->__sk_common.skc_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
 		\$size = @send_size[tid];
 
 		${TIME_FMT:+time($RAW_TIME_FMT);
 		}printf("|sendmsg|%d.%d|%s|%d|", uid, gid, comm, pid);
-		printf("%s|%d|%d|%d\n", ntop(\$sk->sk_daddr), \$dport,
+		printf("%s|%d|%d|%d\n", ntop(\$sk->__sk_common.skc_daddr), \$dport,
 			\$size, retval);
 
 		delete(@send_size[tid]);
@@ -285,13 +285,13 @@ COMM="$1"
 	/@recv_sk[tid]/
 	{
 		\$sk = (struct sock *)@recv_sk[tid];
-		\$dport = \$sk->sk_dport;
+		\$dport = \$sk->__sk_common.skc_dport;
 		\$dport = (\$dport >> 8) | ((\$dport << 8) & 0xFF00);
 		\$len = @recv_len[tid];
 
 		${TIME_FMT:+time($RAW_TIME_FMT);
 		}printf("|recvmsg|%d.%d|%s|%d|", uid, gid, comm, pid);
-		printf("%s|%d|%d|%d\n", ntop(\$sk->sk_daddr), \$dport,
+		printf("%s|%d|%d|%d\n", ntop(\$sk->__sk_common.skc_daddr), \$dport,
 			\$len, retval);
 
 		delete(@recv_len[tid]);
